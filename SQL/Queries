@@ -1,0 +1,435 @@
+-- ===========================================
+-- DATABASE & TABLE CREATION
+-- ===========================================
+
+CREATE DATABASE IF NOT EXISTS ecom;
+USE ecom;
+
+CREATE TABLE ecommerce_transactions (
+    transaction_id INT PRIMARY KEY,
+    user_id INT,
+    product_id INT,
+    product_name VARCHAR(255),
+    category VARCHAR(100),
+    price DECIMAL(10, 2),
+    rating FLOAT,
+    transaction_date DATE,
+    payment_method VARCHAR(50),
+    device_type VARCHAR(50),
+    promo_code_used BOOLEAN,
+    delivery_time_days INT,
+    is_returned BOOLEAN
+);
+
+-- ===========================================
+-- IMPORT DATA
+-- ===========================================
+
+SET GLOBAL local_infile = 1;
+
+LOAD DATA LOCAL INFILE 'C:/Users/Aman/Desktop/New folder/ecommerce_transactions_enhanced.csv'
+INTO TABLE ecommerce_transactions
+FIELDS TERMINATED BY ',' 
+ENCLOSED BY '"' 
+LINES TERMINATED BY '\n'
+IGNORE 1 ROWS;
+
+-- ===========================================
+-- BUSINESS ANALYTICS VIEWS
+-- ===========================================
+
+-- Query 1: Executive Revenue Overview
+CREATE VIEW revenue_overview AS
+SELECT 
+    'Total Revenue' AS metric,
+    CONCAT('$', FORMAT(SUM(price), 0)) AS value,
+    CONCAT(COUNT(*), ' transactions') AS context
+FROM ecommerce_transactions
+
+UNION ALL
+
+SELECT 
+    'Average Order Value',
+    CONCAT('$', FORMAT(AVG(price), 2)),
+    CONCAT('Across ', COUNT(DISTINCT user_id), ' customers')
+FROM ecommerce_transactions
+
+UNION ALL
+
+SELECT 
+    'Revenue per Customer',
+    CONCAT('$', FORMAT(SUM(price)/COUNT(DISTINCT user_id), 2)),
+    'Customer lifetime value indicator'
+FROM ecommerce_transactions;
+
+
+-- Query 2: Top Revenue-Generating Products
+CREATE VIEW top_products AS
+SELECT 
+    product_name,
+    category,
+    COUNT(*) AS units_sold,
+    CONCAT('$', FORMAT(SUM(price), 0)) AS total_revenue,
+    CONCAT('$', FORMAT(AVG(price), 2)) AS avg_price,
+    ROUND(AVG(rating), 2) AS avg_rating,
+    ROW_NUMBER() OVER (ORDER BY SUM(price) DESC) AS revenue_rank
+FROM ecommerce_transactions
+GROUP BY product_name, category
+ORDER BY SUM(price) DESC
+LIMIT 15;
+
+
+-- Query 3: Category Performance Analysis
+CREATE VIEW category_performance AS
+SELECT 
+    category,
+    COUNT(*) AS transactions,
+    COUNT(DISTINCT user_id) AS customers,
+    COUNT(DISTINCT product_id) AS products,
+    CONCAT('$', FORMAT(SUM(price), 0)) AS revenue,
+    CONCAT('$', FORMAT(AVG(price), 2)) AS avg_order_value,
+    ROUND(AVG(rating), 2) AS customer_satisfaction,
+    ROUND(SUM(price) * 100.0 / (SELECT SUM(price) FROM ecommerce_transactions), 1) AS revenue_share_pct
+FROM ecommerce_transactions
+GROUP BY category
+ORDER BY SUM(price) DESC;
+
+
+-- Query 4: Product Profitability Analysis
+CREATE VIEW product_profitability AS
+SELECT 
+    product_name,
+    category,
+    SUM(price) AS revenue,
+    COUNT(*) AS sales_volume,
+    ROUND(AVG(CASE WHEN is_returned THEN 1 ELSE 0 END) * 100, 2) AS return_rate,
+    ROUND(AVG(rating), 2) AS satisfaction_score,
+    CASE 
+        WHEN AVG(rating) >= 4.5 AND AVG(CASE WHEN is_returned THEN 1 ELSE 0 END) <= 0.05 THEN 'Star Product'
+        WHEN SUM(price) >= 15000 THEN 'Revenue Driver' 
+        WHEN AVG(CASE WHEN is_returned THEN 1 ELSE 0 END) >= 0.15 THEN 'Problem Product'
+        ELSE 'Standard Product'
+    END AS product_classification
+FROM ecommerce_transactions
+GROUP BY product_name, category
+ORDER BY revenue DESC;
+
+
+-- Query 5: Monthly Revenue Trends
+CREATE VIEW monthly_trends AS
+SELECT 
+    DATE_FORMAT(transaction_date, '%Y-%m') AS month,
+    COUNT(*) AS transactions,
+    COUNT(DISTINCT user_id) AS active_customers,
+    CONCAT('$', FORMAT(SUM(price), 0)) AS revenue,
+    CONCAT('$', FORMAT(AVG(price), 2)) AS avg_order_value,
+    LAG(SUM(price)) OVER (ORDER BY DATE_FORMAT(transaction_date, '%Y-%m')) AS prev_month_revenue,
+    ROUND(
+        (SUM(price) - LAG(SUM(price)) OVER (ORDER BY DATE_FORMAT(transaction_date, '%Y-%m'))) * 100.0 / 
+        LAG(SUM(price)) OVER (ORDER BY DATE_FORMAT(transaction_date, '%Y-%m')), 2
+    ) AS revenue_growth_pct
+FROM ecommerce_transactions
+GROUP BY DATE_FORMAT(transaction_date, '%Y-%m')
+ORDER BY month;
+
+-- ===========================================
+-- CUSTOMER ANALYSIS (Queries 6–10)
+-- ===========================================
+
+-- Query 6: Customer Segmentation by Value
+CREATE VIEW customer_segments AS
+WITH customer_metrics AS (
+    SELECT 
+        user_id,
+        COUNT(*) AS total_orders,
+        SUM(price) AS lifetime_value,
+        AVG(price) AS avg_order_value,
+        ROUND(AVG(rating), 2) AS avg_rating_given,
+        COUNT(DISTINCT category) AS categories_shopped
+    FROM ecommerce_transactions
+    GROUP BY user_id
+)
+SELECT 
+    CASE 
+        WHEN lifetime_value >= 1000 THEN 'VIP (>$1000)'
+        WHEN lifetime_value >= 500 THEN 'High Value ($500-1000)'
+        WHEN lifetime_value >= 200 THEN 'Medium Value ($200-500)'
+        ELSE 'Low Value (<$200)'
+    END AS customer_segment,
+    COUNT(*) AS customer_count,
+    ROUND(AVG(lifetime_value), 2) AS avg_lifetime_value,
+    ROUND(AVG(total_orders), 1) AS avg_orders,
+    CONCAT('$', FORMAT(SUM(lifetime_value), 0)) AS segment_revenue,
+    ROUND(SUM(lifetime_value) * 100.0 / (SELECT SUM(price) FROM ecommerce_transactions), 1) AS revenue_contribution_pct
+FROM customer_metrics
+GROUP BY customer_segment
+ORDER BY avg_lifetime_value DESC;
+
+
+-- Query 7: Customer Purchase Behavior
+CREATE VIEW customer_behavior AS
+SELECT 
+    user_id,
+    COUNT(*) AS total_purchases,
+    CONCAT('$', FORMAT(SUM(price), 2)) AS total_spent,
+    ROUND(AVG(price), 2) AS avg_order_value,
+    COUNT(DISTINCT category) AS categories_explored,
+    ROUND(AVG(CASE WHEN promo_code_used THEN 1 ELSE 0 END) * 100, 2) AS promo_usage_rate,
+    ROUND(AVG(CASE WHEN is_returned THEN 1 ELSE 0 END) * 100, 2) AS return_rate,
+    (SELECT device_type 
+     FROM ecommerce_transactions e2 
+     WHERE e2.user_id = e1.user_id 
+     GROUP BY device_type 
+     ORDER BY COUNT(*) DESC 
+     LIMIT 1) AS preferred_device,
+    (SELECT payment_method 
+     FROM ecommerce_transactions e3 
+     WHERE e3.user_id = e1.user_id 
+     GROUP BY payment_method 
+     ORDER BY COUNT(*) DESC 
+     LIMIT 1) AS preferred_payment,
+    DATEDIFF(MAX(transaction_date), MIN(transaction_date)) AS customer_lifespan_days
+FROM ecommerce_transactions e1
+GROUP BY user_id
+HAVING total_purchases >= 2
+ORDER BY SUM(price) DESC
+LIMIT 20;
+
+
+-- ===========================================
+-- CHANNEL & PAYMENT INSIGHTS
+-- ===========================================
+
+-- Query 8: Device & Channel Analysis
+CREATE VIEW channel_performance AS
+SELECT 
+    device_type,
+    COUNT(*) AS transactions,
+    ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM ecommerce_transactions), 2) AS transaction_share,
+    CONCAT('$', FORMAT(AVG(price), 2)) AS avg_order_value,
+    CONCAT('$', FORMAT(SUM(price), 0)) AS total_revenue,
+    ROUND(AVG(rating), 2) AS satisfaction,
+    ROUND(AVG(CASE WHEN is_returned THEN 1 ELSE 0 END) * 100, 2) AS return_rate,
+    ROUND(AVG(CASE WHEN promo_code_used THEN 1 ELSE 0 END) * 100, 2) AS promo_usage
+FROM ecommerce_transactions
+GROUP BY device_type
+ORDER BY SUM(price) DESC;
+
+-- Query 9: Payment Method Insights
+CREATE VIEW payment_analysis AS
+SELECT 
+    payment_method,
+    COUNT(*) AS transactions,
+    CONCAT('$', FORMAT(AVG(price), 2)) AS avg_transaction_value,
+    CONCAT('$', FORMAT(SUM(price), 0)) AS total_processed,
+    ROUND(AVG(rating), 2) AS customer_satisfaction,
+    ROUND(AVG(delivery_time_days), 1) AS avg_delivery_days,
+    CASE 
+        WHEN AVG(price) > 200 THEN 'Premium Payment Method'
+        WHEN AVG(price) > 100 THEN 'Standard Payment Method'
+        ELSE 'Budget Payment Method'
+    END AS payment_tier
+FROM ecommerce_transactions
+GROUP BY payment_method
+ORDER BY AVG(price) DESC;
+
+
+-- ===========================================
+-- RETENTION & OPERATIONAL INSIGHTS
+-- ===========================================
+
+-- Query 10: Customer Retention Analysis
+CREATE VIEW customer_retention AS
+WITH first_purchase AS (
+    SELECT 
+        user_id,
+        MIN(transaction_date) AS first_purchase_date,
+        DATE_FORMAT(MIN(transaction_date), '%Y-%m') AS cohort_month
+    FROM ecommerce_transactions
+    GROUP BY user_id
+),
+customer_activity AS (
+    SELECT 
+        fp.user_id,
+        fp.cohort_month,
+        COUNT(DISTINCT DATE_FORMAT(et.transaction_date, '%Y-%m')) AS active_months,
+        COUNT(*) AS total_orders,
+        SUM(et.price) AS total_spent
+    FROM first_purchase fp
+    JOIN ecommerce_transactions et ON fp.user_id = et.user_id
+    GROUP BY fp.user_id, fp.cohort_month
+)
+SELECT 
+    cohort_month,
+    COUNT(*) AS customers_acquired,
+    COUNT(CASE WHEN active_months > 1 THEN 1 END) AS retained_customers,
+    ROUND(COUNT(CASE WHEN active_months > 1 THEN 1 END) * 100.0 / COUNT(*), 2) AS retention_rate,
+    ROUND(AVG(total_spent), 2) AS avg_cohort_revenue
+FROM customer_activity
+GROUP BY cohort_month
+ORDER BY cohort_month;
+
+
+-- Query 11: Delivery Performance Analysis
+CREATE VIEW delivery_performance AS
+SELECT 
+    delivery_time_days,
+    COUNT(*) AS shipments,
+    ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM ecommerce_transactions), 2) AS shipment_percentage,
+    CONCAT('$', FORMAT(AVG(price), 2)) AS avg_order_value,
+    ROUND(AVG(rating), 2) AS customer_satisfaction,
+    ROUND(AVG(CASE WHEN is_returned THEN 1 ELSE 0 END) * 100, 2) AS return_rate,
+    CASE 
+        WHEN delivery_time_days <= 2 THEN 'Express Delivery'
+        WHEN delivery_time_days <= 4 THEN 'Standard Delivery'
+        ELSE 'Slow Delivery'
+    END AS delivery_category
+FROM ecommerce_transactions
+GROUP BY delivery_time_days
+ORDER BY delivery_time_days;
+
+
+-- ===========================================
+-- CROSS-SELLING & RECOMMENDATION INSIGHTS
+-- ===========================================
+
+-- Query 12: Product Association Foundation
+CREATE VIEW product_associations AS
+SELECT 
+    t1.product_name AS product_a,
+    t2.product_name AS product_b,
+    t1.category AS category_a,
+    t2.category AS category_b,
+    COUNT(*) AS times_bought_together,
+    COUNT(DISTINCT t1.user_id) AS unique_customers,
+    ROUND(AVG(t1.price + t2.price), 2) AS avg_bundle_value
+FROM ecommerce_transactions t1
+JOIN ecommerce_transactions t2 
+    ON t1.user_id = t2.user_id 
+    AND t1.transaction_date = t2.transaction_date
+    AND t1.product_id < t2.product_id
+GROUP BY t1.product_name, t2.product_name, t1.category, t2.category
+HAVING times_bought_together >= 5
+ORDER BY times_bought_together DESC, unique_customers DESC
+LIMIT 20;
+
+-- Query 13: Promotional Campaign Effectiveness
+CREATE VIEW promo_effectiveness AS
+SELECT 
+    promo_code_used,
+    COUNT(*) AS transactions,
+    CONCAT('$', FORMAT(AVG(price), 2)) AS avg_order_value,
+    CONCAT('$', FORMAT(SUM(price), 0)) AS total_revenue,
+    ROUND(AVG(rating), 2) AS customer_satisfaction,
+    ROUND(AVG(CASE WHEN is_returned THEN 1 ELSE 0 END) * 100, 2) AS return_rate,
+    COUNT(DISTINCT user_id) AS unique_customers,
+    ROUND(SUM(price) / COUNT(DISTINCT user_id), 2) AS revenue_per_customer
+FROM ecommerce_transactions
+GROUP BY promo_code_used
+ORDER BY promo_code_used DESC;
+
+
+-- Query 14: Cross-Category Customer Analysis
+CREATE VIEW cross_category_behavior AS
+WITH customer_categories AS (
+    SELECT 
+        user_id,
+        COUNT(DISTINCT category) AS categories_purchased,
+        GROUP_CONCAT(DISTINCT category ORDER BY category) AS category_mix,
+        SUM(price) AS total_spent,
+        COUNT(*) AS total_orders
+    FROM ecommerce_transactions
+    GROUP BY user_id
+)
+SELECT 
+    categories_purchased AS num_categories,
+    COUNT(*) AS customer_count,
+    ROUND(AVG(total_spent), 2) AS avg_customer_value,
+    ROUND(AVG(total_orders), 1) AS avg_orders_per_customer,
+    ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM customer_categories), 2) AS customer_percentage,
+    CASE 
+        WHEN categories_purchased = 1 THEN 'Single Category (Cross-sell Opportunity)'
+        WHEN categories_purchased <= 3 THEN 'Multi-Category Shopper'
+        ELSE 'Diverse Shopper (High Value)'
+    END AS shopper_type
+FROM customer_categories
+GROUP BY categories_purchased
+ORDER BY categories_purchased;
+
+
+-- Query 15: High-Value Customer Recommendations
+CREATE VIEW vip_recommendations AS
+WITH top_customers AS (
+    SELECT user_id, SUM(price) AS total_spent
+    FROM ecommerce_transactions
+    GROUP BY user_id
+    HAVING total_spent >= 500
+),
+vip_purchases AS (
+    SELECT 
+        et.category,
+        et.product_name,
+        COUNT(*) AS vip_purchases,
+        ROUND(AVG(et.price), 2) AS avg_price,
+        ROUND(AVG(et.rating), 2) AS avg_rating
+    FROM ecommerce_transactions et
+    JOIN top_customers tc ON et.user_id = tc.user_id
+    GROUP BY et.category, et.product_name
+)
+SELECT 
+    category,
+    product_name,
+    vip_purchases,
+    avg_price,
+    avg_rating,
+    ROUND((vip_purchases * avg_rating), 2) AS vip_preference_score,
+    CASE 
+        WHEN avg_rating >= 4.5 AND vip_purchases >= 5 THEN 'VIP Favorite'
+        WHEN avg_price >= 200 THEN 'Premium Choice'
+        ELSE 'Standard Recommendation'
+    END AS recommendation_tier
+FROM vip_purchases
+ORDER BY vip_preference_score DESC
+LIMIT 15;
+
+
+-- ===========================================
+-- INSIGHT SUMMARY SNAPSHOT
+-- ===========================================
+
+SELECT 'Revenue Insights' AS analysis_area, 
+       (SELECT COUNT(*) FROM top_products) AS data_points,
+       'Product performance ranking' AS insight_type
+
+UNION ALL
+
+SELECT 'Customer Insights',
+       (SELECT COUNT(*) FROM customer_behavior),
+       'Behavioral segmentation'
+
+UNION ALL
+
+SELECT 'Operational Insights',
+       (SELECT COUNT(*) FROM delivery_performance),
+       'Delivery optimization'
+
+UNION ALL
+
+SELECT 'Recommendation Engine',
+       (SELECT COUNT(*) FROM product_associations),
+       'Cross-sell opportunities'
+
+UNION ALL
+
+SELECT 'Marketing Insights',
+       (SELECT COUNT(*) FROM promo_effectiveness),
+       'Campaign effectiveness';
+
+
+-- ===========================================
+-- OPTIONAL SAMPLE OUTPUTS
+-- ===========================================
+
+SELECT * FROM customer_behavior LIMIT 5;
+SELECT * FROM category_performance;
+SELECT * FROM top_products LIMIT 10;
