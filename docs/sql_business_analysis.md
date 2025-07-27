@@ -8,7 +8,7 @@
 ## Key Business Findings
 
 ### 1. Revenue Performance Insights
-- **Total Revenue**: $X,XXX,XXX across 50,000+ transactions
+- **Total Revenue**: $9.5 Million across 50,000+ transactions
 - **Top Category**: Electronics drives 45% of revenue despite only 25% of transactions
 - **High-Value Products**: iPhone 15, MacBook Pro, and Dyson Vacuum are revenue champions
 - **Average Order Value**: $197.88 with significant category variations
